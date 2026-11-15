@@ -1,46 +1,97 @@
 
 -- Hunting Together RPG
--- Training Dummy UI Inspector
--- Read-only: tidak mengubah game
+-- Training Dummy Stats Monitor v2
+-- Read only / No game modification
 
-local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local dummy = workspace:FindFirstChild("TrainingDummy")
 
-if not player then
-    warn("[Dummy Inspector] LocalPlayer unavailable")
+if not dummy then
+    warn("[Monitor] TrainingDummy not found")
     return
 end
 
-local count = 0
+local nameplate = dummy:FindFirstChild("Nameplate", true)
 
-local function scan(root)
-    for _, obj in ipairs(root:GetDescendants()) do
-        if obj:IsA("TextLabel")
-            or obj:IsA("TextButton") then
+if not nameplate then
+    warn("[Monitor] Nameplate not found")
+    return
+end
 
-            local value = tostring(obj.Text)
-            local lower = string.lower(value)
+print("===== DUMMY STATS MONITOR =====")
+print("Monitoring:", nameplate:GetFullName())
 
-            if string.find(lower, "total damage", 1, true)
-                or string.find(lower, "dps", 1, true) then
+local connections = {}
+local watched = {}
+local active = true
+local changeCount = 0
 
-                count = count + 1
+local function clean(value)
+    return tostring(value):gsub("\n", " | ")
+end
 
-                print("[DUMMY UI FOUND]")
-                print("Path:", obj:GetFullName())
-                print("Text:", value)
-                print("-----------------------")
-            end
-        end
+local function isTextObject(obj)
+    return obj:IsA("TextLabel")
+        or obj:IsA("TextButton")
+        or obj:IsA("TextBox")
+end
+
+local function watch(obj)
+    if watched[obj] or not isTextObject(obj) then
+        return
     end
+
+    watched[obj] = true
+
+    print("[FOUND]", obj:GetFullName())
+    print("[TEXT]", clean(obj.Text))
+
+    local lastPrint = 0
+
+    local connection =
+        obj:GetPropertyChangedSignal("Text"):Connect(function()
+
+        if not active then
+            return
+        end
+
+        local now = os.clock()
+
+        if now - lastPrint < 0.5 then
+            return
+        end
+
+        lastPrint = now
+        changeCount = changeCount + 1
+
+        print("[UPDATED]", obj:GetFullName())
+        print("[VALUE]", clean(obj.Text))
+    end)
+
+    table.insert(connections, connection)
 end
 
-scan(workspace)
+watch(nameplate)
 
-local playerGui = player:FindFirstChild("PlayerGui")
-
-if playerGui then
-    scan(playerGui)
+for _, obj in ipairs(nameplate:GetDescendants()) do
+    watch(obj)
 end
 
-print("[Dummy Inspector] Found:", count)
+table.insert(connections,
+    nameplate.DescendantAdded:Connect(function(obj)
+        watch(obj)
+    end)
+)
+
+print("[Monitor] Attack the dummy now!")
+print("[Monitor] Recording for 30 seconds")
+
+task.delay(30, function()
+    active = false
+
+    for _, connection in ipairs(connections) do
+        connection:Disconnect()
+    end
+
+    print("===== MONITOR FINISHED =====")
+    print("Text changes:", changeCount)
+end)
