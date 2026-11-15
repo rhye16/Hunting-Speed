@@ -1,417 +1,264 @@
 
--- Hunting Together RPG - Speed UI
--- Fixed LocalPlayer nil / WaitForChild error
--- Client-side WalkSpeed controller
+-- Archer Basic Attack Monitor
+-- Hunting Together RPG
+-- Read-only damage measurement
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
--- Wait for game to load
-local loadDeadline = os.clock() + 20
-while not game:IsLoaded() and os.clock() < loadDeadline do
-    task.wait(0.2)
-end
-
--- Wait for LocalPlayer
 local player = Players.LocalPlayer
-local playerDeadline = os.clock() + 15
+local deadline = os.clock() + 15
 
-while not player and os.clock() < playerDeadline do
+while not player and os.clock() < deadline do
     task.wait(0.2)
     player = Players.LocalPlayer
 end
 
 if not player then
-    warn("[Speed UI] LocalPlayer tidak tersedia!")
-    warn("[Speed UI] Pastikan executor berjalan di client.")
+    warn("[Archer Monitor] LocalPlayer unavailable")
     return
 end
 
--- Wait for PlayerGui
-local playerGui =
-    player:FindFirstChildOfClass("PlayerGui")
-    or player:WaitForChild("PlayerGui", 15)
+local parent = player:WaitForChild("PlayerGui", 10)
+if not parent then return end
 
-if not playerGui then
-    warn("[Speed UI] PlayerGui tidak ditemukan!")
-    return
-end
+local old = parent:FindFirstChild("ArcherHitMonitor")
+if old then old:Destroy() end
 
--- Remove previous UI
-local existing = playerGui:FindFirstChild(
-    "HuntingTogetherSpeedUI"
-)
-
-if existing then
-    existing:Destroy()
-end
-
--- Create ScreenGui
 local gui = Instance.new("ScreenGui")
-gui.Name = "HuntingTogetherSpeedUI"
+gui.Name = "ArcherHitMonitor"
 gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-gui.Parent = playerGui
+gui.Parent = parent
 
--- UI helper
-local function create(className, properties, parent)
-    local object = Instance.new(className)
-
-    for property, value in pairs(properties) do
-        object[property] = value
+local function make(class, props, container)
+    local obj = Instance.new(class)
+    for key, value in pairs(props) do
+        obj[key] = value
     end
-
-    object.Parent = parent
-    return object
+    obj.Parent = container
+    return obj
 end
 
--- Main Panel
-local panel = create("Frame", {
-    Name = "Panel",
-    Size = UDim2.fromOffset(270, 168),
-    Position = UDim2.new(0, 20, 0.5, -84),
-    BackgroundColor3 = Color3.fromRGB(23, 26, 36),
-    BorderSizePixel = 0,
-    Active = true
+local panel = make("Frame", {
+    Size = UDim2.fromOffset(320, 230),
+    Position = UDim2.new(0, 20, 0.5, -115),
+    BackgroundColor3 = Color3.fromRGB(25, 29, 40),
+    BorderSizePixel = 0
 }, gui)
 
-create("UICorner", {
-    CornerRadius = UDim.new(0, 12)
+make("UICorner", {
+    CornerRadius = UDim.new(0, 10)
 }, panel)
 
-create("UIStroke", {
-    Color = Color3.fromRGB(69, 75, 98),
-    Thickness = 1
-}, panel)
+local function label(text, y)
+    return make("TextLabel", {
+        Position = UDim2.fromOffset(12, y),
+        Size = UDim2.fromOffset(296, 27),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextSize = 14,
+        Font = Enum.Font.Gotham,
+        TextColor3 = Color3.new(1, 1, 1),
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, panel)
+end
 
--- Header
-local header = create("Frame", {
-    Name = "DragBar",
-    Size = UDim2.new(1, 0, 0, 39),
-    BackgroundTransparency = 1,
-    Active = true
-}, panel)
+label("ARCHER | BASIC ATTACK MONITOR", 8)
 
-create("TextLabel", {
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(13, 0),
-    Size = UDim2.fromOffset(165, 39),
-    Font = Enum.Font.GothamBold,
-    Text = "HUNTING | SPEED",
-    TextSize = 13,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    TextColor3 = Color3.fromRGB(235, 239, 255)
-}, header)
+local status = label("Target: Not selected", 43)
+local hitLabel = label("HP decreases: 0", 75)
+local rateLabel = label("Estimated hits/s: 0", 104)
+local dpsLabel = label("DPS: 0", 133)
 
--- Minimize Button
-local minimize = create("TextButton", {
-    Name = "Minimize",
-    Position = UDim2.new(1, -70, 0, 7),
-    Size = UDim2.fromOffset(27, 25),
-    Text = "-",
-    Font = Enum.Font.GothamBold,
-    TextSize = 19,
-    TextColor3 = Color3.fromRGB(226, 230, 244),
-    BackgroundColor3 = Color3.fromRGB(44, 49, 65),
-    BorderSizePixel = 0
-}, header)
+local function button(text, x, action)
+    local btn = make("TextButton", {
+        Position = UDim2.fromOffset(x, 177),
+        Size = UDim2.fromOffset(94, 35),
+        Text = text,
+        TextSize = 12,
+        Font = Enum.Font.GothamBold,
+        TextColor3 = Color3.new(1, 1, 1),
+        BackgroundColor3 = Color3.fromRGB(48, 110, 210)
+    }, panel)
 
-create("UICorner", {
-    CornerRadius = UDim.new(0, 6)
-}, minimize)
+    make("UICorner", {
+        CornerRadius = UDim.new(0, 7)
+    }, btn)
 
--- Close Button
-local close = create("TextButton", {
-    Name = "Close",
-    Position = UDim2.new(1, -38, 0, 7),
-    Size = UDim2.fromOffset(27, 25),
-    Text = "X",
-    Font = Enum.Font.GothamBold,
-    TextSize = 12,
-    TextColor3 = Color3.fromRGB(255, 225, 225),
-    BackgroundColor3 = Color3.fromRGB(104, 43, 52),
-    BorderSizePixel = 0
-}, header)
+    btn.MouseButton1Click:Connect(action)
+    return btn
+end
 
-create("UICorner", {
-    CornerRadius = UDim.new(0, 6)
-}, close)
-
--- Body
-local body = create("Frame", {
-    Position = UDim2.fromOffset(10, 43),
-    Size = UDim2.new(1, -20, 1, -52),
-    BackgroundTransparency = 1
-}, panel)
-
-create("TextLabel", {
-    Size = UDim2.new(1, 0, 0, 21),
-    BackgroundTransparency = 1,
-    Text = "WalkSpeed (8 - 150)",
-    TextXAlignment = Enum.TextXAlignment.Left,
-    Font = Enum.Font.Gotham,
-    TextSize = 12,
-    TextColor3 = Color3.fromRGB(164, 176, 200)
-}, body)
-
--- Speed Input
-local speedBox = create("TextBox", {
-    Name = "SpeedInput",
-    Position = UDim2.fromOffset(0, 26),
-    Size = UDim2.new(0.46, 0, 0, 37),
-    Text = "36",
-    PlaceholderText = "Speed",
-    ClearTextOnFocus = false,
-    Font = Enum.Font.GothamBold,
-    TextSize = 16,
-    TextColor3 = Color3.fromRGB(245, 248, 255),
-    BackgroundColor3 = Color3.fromRGB(38, 42, 58),
-    BorderSizePixel = 0
-}, body)
-
-create("UICorner", {
-    CornerRadius = UDim.new(0, 7)
-}, speedBox)
-
--- Apply Button
-local apply = create("TextButton", {
-    Name = "Apply",
-    Position = UDim2.new(0.5, 0, 0, 26),
-    Size = UDim2.new(0.5, 0, 0, 37),
-    Text = "APPLY",
-    Font = Enum.Font.GothamBold,
-    TextSize = 12,
-    TextColor3 = Color3.fromRGB(255, 255, 255),
-    BackgroundColor3 = Color3.fromRGB(55, 108, 224),
-    BorderSizePixel = 0
-}, body)
-
-create("UICorner", {
-    CornerRadius = UDim.new(0, 7)
-}, apply)
-
--- Toggle Button
-local toggle = create("TextButton", {
-    Name = "Toggle",
-    Position = UDim2.fromOffset(0, 71),
-    Size = UDim2.new(1, 0, 0, 34),
-    Text = "SPEED: OFF",
-    Font = Enum.Font.GothamBold,
-    TextSize = 13,
-    TextColor3 = Color3.fromRGB(235, 240, 255),
-    BackgroundColor3 = Color3.fromRGB(72, 78, 96),
-    BorderSizePixel = 0
-}, body)
-
-create("UICorner", {
-    CornerRadius = UDim.new(0, 7)
-}, toggle)
-
--- Speed System
-local enabled = false
-local targetSpeed = 36
-local humanoid = nil
-local originalSpeed = nil
-local generation = 0
-local closed = false
+local mouse = player:GetMouse()
+local readHP = nil
+local targetName = nil
+local selecting = false
+local armAt = 0
+local recording = false
+local started = 0
+local lastHP = 0
+local hits = 0
+local damage = 0
+local elapsed = 0
 local connections = {}
 
-local function connect(signal, handler)
-    local connection = signal:Connect(handler)
-    table.insert(connections, connection)
-    return connection
-end
+local healthNames = {
+    "Health", "HP", "CurrentHealth", "CurrentHP"
+}
 
-local function updateButton()
-    if enabled then
-        toggle.Text = "SPEED: ON | " .. targetSpeed
-        toggle.BackgroundColor3 =
-            Color3.fromRGB(34, 139, 104)
-    else
-        toggle.Text = "SPEED: OFF"
-        toggle.BackgroundColor3 =
-            Color3.fromRGB(72, 78, 96)
+local function findHealth(part)
+    local current = part
+
+    while current and current ~= workspace do
+        if current:IsA("Model") then
+            local humanoid =
+                current:FindFirstChildOfClass("Humanoid")
+
+            if humanoid then
+                return current.Name, function()
+                    return humanoid.Health
+                end
+            end
+
+            for _, name in ipairs(healthNames) do
+                local value = current:FindFirstChild(name, true)
+
+                if value and (
+                    value:IsA("NumberValue")
+                    or value:IsA("IntValue")
+                ) then
+                    return current.Name, function()
+                        return value.Value
+                    end
+                end
+
+                local attribute = current:GetAttribute(name)
+                if type(attribute) == "number" then
+                    return current.Name, function()
+                        return current:GetAttribute(name)
+                    end
+                end
+            end
+        end
+
+        current = current.Parent
     end
+
+    return nil, nil
 end
 
-local function applySpeed()
-    if humanoid and humanoid.Parent and enabled then
-        humanoid.WalkSpeed = targetSpeed
-    end
-end
+local selectBtn = button("SELECT DUMMY", 8, function()
+    recording = false
+    selecting = true
+    armAt = os.clock() + 0.4
+    status.Text = "Click the Training Dummy..."
+end)
 
--- Handle character spawn and respawn
-local function attachCharacter(character)
-    generation = generation + 1
-    local myGeneration = generation
-
-    humanoid = nil
-    originalSpeed = nil
-
-    local found = character:WaitForChild("Humanoid", 10)
-
-    if closed or myGeneration ~= generation or not found then
+local startBtn = button("START 30S", 113, function()
+    if not readHP then
+        status.Text = "Select dummy first!"
         return
     end
 
-    humanoid = found
-    originalSpeed = found.WalkSpeed
-
-    applySpeed()
-end
-
--- Validate speed input
-local function readSpeed()
-    local value = tonumber(speedBox.Text)
-
-    if not value or value ~= value
-        or value < 8 or value > 150 then
-        speedBox.Text = tostring(targetSpeed)
+    local hp = readHP()
+    if type(hp) ~= "number" then
+        status.Text = "Target HP unavailable"
         return
     end
 
-    targetSpeed = math.floor(value + 0.5)
-    speedBox.Text = tostring(targetSpeed)
-
-    applySpeed()
-    updateButton()
-end
-
--- Apply
-connect(apply.MouseButton1Click, readSpeed)
-
-connect(speedBox.FocusLost, function()
-    readSpeed()
+    hits = 0
+    damage = 0
+    elapsed = 0
+    lastHP = hp
+    started = os.clock()
+    recording = true
+    status.Text = "Recording: " .. targetName
 end)
 
--- Toggle ON/OFF
-connect(toggle.MouseButton1Click, function()
-    enabled = not enabled
-
-    if enabled then
-        readSpeed()
-        applySpeed()
-    elseif humanoid and humanoid.Parent
-        and originalSpeed then
-        humanoid.WalkSpeed = originalSpeed
-    end
-
-    updateButton()
+local closeBtn = button("CLOSE", 218, function()
+    gui:Destroy()
 end)
 
--- Minimize
-local minimized = false
+table.insert(connections,
+    mouse.Button1Down:Connect(function()
+        if not selecting or os.clock() < armAt then
+            return
+        end
 
-connect(minimize.MouseButton1Click, function()
-    minimized = not minimized
+        local part = mouse.Target
+        if not part then return end
 
-    body.Visible = not minimized
+        local name, reader = findHealth(part)
 
-    panel.Size = minimized
-        and UDim2.fromOffset(270, 39)
-        or UDim2.fromOffset(270, 168)
+        if reader then
+            readHP = reader
+            targetName = name
+            selecting = false
+            recording = false
+            status.Text = "Selected: " .. name
+        else
+            status.Text = "No readable HP found"
+        end
+    end)
+)
 
-    minimize.Text = minimized and "+" or "-"
-end)
+local displayClock = 0
 
--- Cleanup
-local function shutdown()
-    if closed then
-        return
-    end
+table.insert(connections,
+    RunService.Heartbeat:Connect(function(dt)
+        if not recording then return end
 
-    closed = true
+        elapsed = math.min(os.clock() - started, 30)
 
-    if enabled and humanoid
-        and humanoid.Parent and originalSpeed then
-        humanoid.WalkSpeed = originalSpeed
-    end
+        local hp = readHP and readHP()
 
+        if type(hp) ~= "number" then
+            recording = false
+            status.Text = "Lost target HP"
+            return
+        end
+
+        if hp < lastHP then
+            damage = damage + (lastHP - hp)
+            hits = hits + 1
+        end
+
+        lastHP = hp
+
+        displayClock = displayClock + dt
+
+        if displayClock >= 0.15 then
+            displayClock = 0
+
+            local duration = math.max(elapsed, 0.01)
+
+            hitLabel.Text = "HP decreases: " .. hits
+            rateLabel.Text = string.format(
+                "Estimated hits/s: %.2f",
+                hits / duration
+            )
+            dpsLabel.Text = string.format(
+                "DPS: %.2f",
+                damage / duration
+            )
+        end
+
+        if elapsed >= 30 then
+            recording = false
+            status.Text = "Finished: " .. targetName
+            print(string.format(
+                "[Archer Monitor] Hits=%d Rate=%.2f DPS=%.2f",
+                hits, hits / 30, damage / 30
+            ))
+        end
+    end)
+)
+
+gui.Destroying:Connect(function()
+    recording = false
     for _, connection in ipairs(connections) do
         connection:Disconnect()
     end
-
-    gui:Destroy()
-end
-
-connect(close.MouseButton1Click, shutdown)
-connect(gui.Destroying, shutdown)
-
--- Draggable UI
-local dragging = false
-local startInputPosition
-local startPanelPosition
-
-connect(header.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-
-        dragging = true
-        startInputPosition = input.Position
-        startPanelPosition = panel.Position
-    end
 end)
 
-connect(UserInputService.InputChanged, function(input)
-    if not dragging or not startInputPosition then
-        return
-    end
-
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-        and input.UserInputType ~= Enum.UserInputType.Touch then
-        return
-    end
-
-    local delta = input.Position - startInputPosition
-
-    panel.Position = UDim2.new(
-        startPanelPosition.X.Scale,
-        startPanelPosition.X.Offset + delta.X,
-        startPanelPosition.Y.Scale,
-        startPanelPosition.Y.Offset + delta.Y
-    )
-end)
-
-connect(UserInputService.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
-
--- Reapply speed periodically
-local updateClock = 0
-
-connect(RunService.Heartbeat, function(dt)
-    if not enabled then
-        return
-    end
-
-    updateClock = updateClock + dt
-
-    if updateClock < 0.3 then
-        return
-    end
-
-    updateClock = 0
-
-    if humanoid and humanoid.Parent
-        and humanoid.WalkSpeed ~= targetSpeed then
-        humanoid.WalkSpeed = targetSpeed
-    end
-end)
-
--- Respawn support
-connect(player.CharacterAdded, function(character)
-    task.spawn(attachCharacter, character)
-end)
-
-if player.Character then
-    task.spawn(attachCharacter, player.Character)
-end
-
-updateButton()
-
-print("[Hunting Speed UI] Loaded successfully!")
+print("[Archer Monitor] Ready")
