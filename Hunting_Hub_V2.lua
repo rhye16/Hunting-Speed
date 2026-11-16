@@ -182,8 +182,8 @@ local logo = new("Frame", {
 }, side)
 round(logo, 10)
 txt(logo, "H", 12, 3, 24, 30, 18, true, Color3.fromRGB(178, 242, 193))
-txt(side, "Hunting Hub", 62, 19, 123, 21, 15, true)
-txt(side, "v2  |  utility", 62, 40, 111, 18, 10, false, COLOR.muted)
+txt(side, "RHYE Hub", 62, 19, 123, 21, 15, true)
+txt(side, "Beta | Test", 62, 40, 111, 18, 10, false, COLOR.muted)
 new("Frame", {Position = UDim2.fromOffset(14, 70), Size = UDim2.fromOffset(160, 1),
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, side)
 txt(side, "NAVIGATION", 17, 87, 145, 16, 10, true, COLOR.muted)
