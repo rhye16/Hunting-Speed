@@ -1,5 +1,5 @@
 --[[
-    HUNTING HUB V3 | Movement + Dungeon Hover Assistant
+    HUNTING HUB V3.1 | Combat Range Fix + Dungeon Assistant
     Main > Config Movement / Config Dungeon, Info, Save Config, Keybind
     Visual inspired by a dark sidebar-style hub.
     Dungeon module follows nearby enemies while the native Auto Battle handles attacks.
@@ -56,8 +56,8 @@ local WIDTH, HEIGHT = 710, 434
 local CONFIG_DIR = "HuntingHubV2"
 local CONFIG_FILE = CONFIG_DIR .. "/config.json"
 local cfg = {
-    dungeonHeight = 10,
-    dungeonRange = 14,
+    dungeonHeight = 1,
+    dungeonRange = 4,
     dungeonAutoNext = true,
     walkSpeed = 36,
     jumpPower = 50,
@@ -75,8 +75,8 @@ local function loadConfig()
         return HttpService:JSONDecode(readfile(CONFIG_FILE))
     end)
     if not ok or type(result) ~= "table" then return false end
-    if type(result.dungeonHeight) == "number" then cfg.dungeonHeight = math.clamp(math.floor(result.dungeonHeight), 5, 22) end
-    if type(result.dungeonRange) == "number" then cfg.dungeonRange = math.clamp(math.floor(result.dungeonRange), 6, 24) end
+    if type(result.dungeonHeight) == "number" then cfg.dungeonHeight = math.clamp(math.floor(result.dungeonHeight), 0, 2) end
+    if type(result.dungeonRange) == "number" then cfg.dungeonRange = math.clamp(math.floor(result.dungeonRange), 2, 5) end
     if type(result.dungeonAutoNext) == "boolean" then cfg.dungeonAutoNext = result.dungeonAutoNext end
     if type(result.walkSpeed) == "number" then cfg.walkSpeed = math.clamp(math.floor(result.walkSpeed + 0.5), 8, 150) end
     if type(result.jumpPower) == "number" then cfg.jumpPower = math.clamp(math.floor(result.jumpPower + 0.5), 10, 120) end
@@ -88,6 +88,10 @@ local function loadConfig()
     return true
 end
 local wasLoaded = loadConfig()
+-- V3.1 migrates overly large V3 hover settings into a conservative combat range.
+-- This deliberately prioritizes attacks being within likely effective range,
+-- rather than the previous (10 horizontal, 5 vertical) position.
+
 
 local function saveConfig()
     if type(writefile) ~= "function" then return false, "Executor tidak mendukung writefile" end
@@ -193,7 +197,7 @@ local logo = new("Frame", {
 round(logo, 10)
 txt(logo, "H", 12, 3, 24, 30, 18, true, Color3.fromRGB(178, 242, 193))
 txt(side, "Hunting Hub", 62, 19, 123, 21, 15, true)
-txt(side, "v2  |  utility", 62, 40, 111, 18, 10, false, COLOR.muted)
+txt(side, "v3.1  |  combat fix", 62, 40, 111, 18, 10, false, COLOR.muted)
 new("Frame", {Position = UDim2.fromOffset(14, 70), Size = UDim2.fromOffset(160, 1),
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, side)
 txt(side, "NAVIGATION", 17, 87, 145, 16, 10, true, COLOR.muted)
@@ -286,7 +290,7 @@ local dungeonCard = new("Frame", {
 round(dungeonCard, 10)
 stroke(dungeonCard)
 txt(dungeonCard, "Config Dungeon", 16, 9, 360, 25, 15, true)
-txt(dungeonCard, "Masuk dungeon & nyalakan Auto Battle dari game dahulu.", 16, 34, 453, 22, 11, false, COLOR.muted)
+txt(dungeonCard, "Aktifkan Auto Battle game. Low hover bukan anti-damage.", 16, 34, 453, 22, 11, false, COLOR.muted)
 local function dungeonField(label, description, y, val)
     txt(dungeonCard, label, 17, y, 261, 23, 13, true)
     txt(dungeonCard, description, 17, y + 23, 295, 18, 10, false, COLOR.muted)
@@ -299,8 +303,8 @@ local function dungeonField(label, description, y, val)
     round(field, 7)
     return field
 end
-local heightBox = dungeonField("Hover height", "Tinggi di atas monster (5 - 22 studs)", 68, cfg.dungeonHeight)
-local rangeBox = dungeonField("Target distance", "Jarak horizontal dari monster (6 - 24)", 127, cfg.dungeonRange)
+local heightBox = dungeonField("Hover height", "Rendah untuk combat (0 - 2 studs)", 68, cfg.dungeonHeight)
+local rangeBox = dungeonField("Target distance", "Dekat agar hit valid (2 - 5 studs)", 127, cfg.dungeonRange)
 local dungeonToggle = button(dungeonCard, "DUNGEON: OFF", 17, 192, 211, 32, COLOR.card2)
 local nextToggle = button(dungeonCard, "NEXT STAGE: ON", 240, 192, 224, 32, COLOR.greenDark)
 local dungeonStop = button(dungeonCard, "STOP / LAND", 17, 239, 211, 33, COLOR.card2)
@@ -531,12 +535,12 @@ local function stopDungeon(reason)
 end
 local function applyDungeonFields()
     local h, r = tonumber(heightBox.Text), tonumber(rangeBox.Text)
-    if not h or h ~= h or h < 5 or h > 22 then
-        dungeonStatus("Hover height must be 5 - 22", "-")
+    if not h or h ~= h or h < 0 or h > 2 then
+        dungeonStatus("Hover height must be 0 - 2", "-")
         return false
     end
-    if not r or r ~= r or r < 6 or r > 24 then
-        dungeonStatus("Target distance must be 6 - 24", "-")
+    if not r or r ~= r or r < 2 or r > 5 then
+        dungeonStatus("Target distance must be 2 - 5", "-")
         return false
     end
     cfg.dungeonHeight = math.floor(h)
@@ -583,6 +587,9 @@ local function isAliveEnemy(model)
     if isPlayerModel(model) then return nil end
     local key = normalizedName(model.Name)
     if hasTerm(key, exclusions) then return nil end
+    -- V3 wrongly targeted nested body-part models like "Head".
+    -- They can inherit an Enemy/Dungeon parent name but are not target entities.
+    if hasTerm(key, {"head", "torso", "upperbody", "lowerbody", "leftarm", "rightarm", "leftleg", "rightleg", "weapon", "accessory", "hitbox", "collider", "visual", "vfx"}) then return nil end
     local anc = model.Parent
     local flagged = hasTerm(key, threats)
     for _ = 1, 3 do
@@ -610,8 +617,14 @@ local function isAliveEnemy(model)
     end
     if hp ~= nil and hp <= 0 then return nil end
     if model:GetAttribute("Dead") == true then return nil end
-    local part = model:FindFirstChild("HumanoidRootPart") or model.PrimaryPart
-        or model:FindFirstChild("RootPart") or model:FindFirstChildWhichIsA("BasePart")
+    -- Require evidence this model is an actual creature rather than a nested decoration.
+    -- Some games expose Humanoid; others expose HP attributes or an explicit root part.
+    local ownRoot = model:FindFirstChild("HumanoidRootPart")
+        or model:FindFirstChild("RootPart") or model.PrimaryPart
+    local explicitEnemy = model:GetAttribute("IsEnemy") == true
+        or model:GetAttribute("IsBoss") == true
+    if not (humanoid or hp ~= nil or ownRoot or explicitEnemy) then return nil end
+    local part = ownRoot or model:FindFirstChildWhichIsA("BasePart")
     return part
 end
 local function scanEnemies(origin)
@@ -713,9 +726,15 @@ local function flyStep(dt)
         local facingAway = root.Position - part.Position
         facingAway = Vector3.new(facingAway.X, 0, facingAway.Z)
         if facingAway.Magnitude < 0.1 then facingAway = Vector3.new(1, 0, 0) end
-        local goal = part.Position + facingAway.Unit * cfg.dungeonRange + Vector3.new(0, cfg.dungeonHeight, 0)
+        -- The previous V3 could chase targets >10 studs away vertically/horizontally.
+        -- Use only low-hover, short-range positioning; this does not bypass server combat rules.
+        local goal = part.Position + facingAway.Unit * cfg.dungeonRange
+            + Vector3.new(0, cfg.dungeonHeight, 0)
         approach(goal, part.Position, dt)
-        dungeonStatus(selected.model.Name:lower():find("boss", 1, true) and "BOSS - hovering" or "Fighting / hovering", selected.model.Name)
+        local separation = (root.Position - part.Position).Magnitude
+        dungeonStatus(selected.model.Name:lower():find("boss", 1, true)
+            and "BOSS - low hover" or "Combat - low hover",
+            string.format("%s | %.1f studs", selected.model.Name, separation))
         return
     end
     dungeonTarget = nil
@@ -883,6 +902,6 @@ listen(close.MouseButton1Click, shutdown)
 listen(gui.Destroying, shutdown)
 updateToggles()
 setPage("Main")
-print("[Hunting Hub V3] Loaded. Keybind:", cfg.hotkey)
+print("[Hunting Hub V3.1] Loaded. Keybind:", cfg.hotkey)
 print("[Hunting Hub V3] Save config:", CONFIG_FILE)
-print("[Hunting Hub V3] Dungeon uses native Auto Battle; no server bypass, dungeon progress unverified.")
+print("[Hunting Hub V3.1] Low hover only; enemy AoE, evasion, server hit range still apply.")
