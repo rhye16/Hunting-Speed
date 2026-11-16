@@ -1,5 +1,5 @@
 --[[
-    RHYE HUB V3.2 | Dungeon Assistant + Experimental Red Telegraph Dodge
+    RHYE HUB V3.3 | Wall-Aware Dodge + Adjustable Dungeon Travel
     Main > Config Movement / Config Dungeon, Info, Save Config, Keybind
     Visual inspired by a dark sidebar-style hub.
     Dungeon module follows nearby enemies while the native Auto Battle handles attacks.
@@ -14,6 +14,7 @@ local UIS = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
+local PathfindingService = game:GetService("PathfindingService")
 
 local player = Players.LocalPlayer
 local waitUntil = os.clock() + 15
@@ -40,7 +41,7 @@ end
 if globalEnv.__RHYEHubV3 then
     pcall(function() globalEnv.__RHYEHubV3() end)
 end
-for _, previousName in ipairs({"HuntingHubV3", "RHYEHubV3_2"}) do
+for _, previousName in ipairs({"HuntingHubV3", "RHYEHubV3_2", "RHYEHubV3_3"}) do
     local previous = playerGui:FindFirstChild(previousName)
     if previous then previous:Destroy() end
 end
@@ -65,9 +66,11 @@ local CONFIG_FILE = CONFIG_DIR .. "/config.json"
 local LEGACY_CONFIG_FILE = "HuntingHubV2/config.json"
 local cfg = {
     dungeonHeight = 1,
-    dungeonRange = 4,
+    dungeonRange = 6,
+    dungeonMoveSpeed = 78,
     dungeonAutoNext = true,
     dungeonAutoDodge = false,
+    dungeonDodgeNoclip = false,
     walkSpeed = 36,
     jumpPower = 50,
     speedOn = false,
@@ -94,7 +97,9 @@ local function loadConfig()
     end)
     if not ok or type(result) ~= "table" then return false end
     if type(result.dungeonHeight) == "number" then cfg.dungeonHeight = math.clamp(math.floor(result.dungeonHeight), 0, 2) end
-    if type(result.dungeonRange) == "number" then cfg.dungeonRange = math.clamp(math.floor(result.dungeonRange), 2, 5) end
+    if type(result.dungeonRange) == "number" then cfg.dungeonRange = math.clamp(math.floor(result.dungeonRange), 2, 30) end
+    if type(result.dungeonMoveSpeed) == "number" then cfg.dungeonMoveSpeed = math.clamp(math.floor(result.dungeonMoveSpeed), 20, 150) end
+    if type(result.dungeonDodgeNoclip) == "boolean" then cfg.dungeonDodgeNoclip = result.dungeonDodgeNoclip end
     if type(result.dungeonAutoNext) == "boolean" then cfg.dungeonAutoNext = result.dungeonAutoNext end
     if type(result.dungeonAutoDodge) == "boolean" then cfg.dungeonAutoDodge = result.dungeonAutoDodge end
     if type(result.walkSpeed) == "number" then cfg.walkSpeed = math.clamp(math.floor(result.walkSpeed + 0.5), 8, 150) end
@@ -166,7 +171,7 @@ local function button(parent, text, x, y, w, h, color)
 end
 
 local gui = new("ScreenGui", {
-    Name = "RHYEHubV3_2", ResetOnSpawn = false,
+    Name = "RHYEHubV3_3", ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder = 9000, IgnoreGuiInset = true
 }, playerGui)
@@ -216,7 +221,7 @@ local logo = new("Frame", {
 round(logo, 10)
 txt(logo, "R", 12, 3, 24, 30, 18, true, Color3.fromRGB(178, 242, 193))
 txt(side, "RHYE Hub", 62, 19, 123, 21, 15, true)
-txt(side, "v3.2  |  auto dodge", 62, 40, 111, 18, 10, false, COLOR.muted)
+txt(side, "v3.3  |  wall-safe", 62, 40, 117, 18, 10, false, COLOR.muted)
 new("Frame", {Position = UDim2.fromOffset(14, 70), Size = UDim2.fromOffset(160, 1),
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, side)
 txt(side, "NAVIGATION", 17, 87, 145, 16, 10, true, COLOR.muted)
@@ -253,8 +258,11 @@ new("Frame", {Position = UDim2.fromOffset(20, 53), Size = UDim2.fromOffset(481, 
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, content)
 local mainPage = new("Frame", {Position = UDim2.fromOffset(0, 55),
     Size = UDim2.fromOffset(520, 379), BackgroundTransparency = 1}, content)
-local dungeonPage = new("Frame", {Position = UDim2.fromOffset(0, 55),
+local dungeonPage = new("ScrollingFrame", {Position = UDim2.fromOffset(0, 55),
     Size = UDim2.fromOffset(520, 379), BackgroundTransparency = 1,
+    BorderSizePixel = 0, ScrollBarThickness = 5,
+    CanvasSize = UDim2.fromOffset(0, 513),
+    ScrollingDirection = Enum.ScrollingDirection.Y,
     Visible = false}, content)
 local infoPage = new("Frame", {Position = UDim2.fromOffset(0, 55),
     Size = UDim2.fromOffset(520, 379), BackgroundTransparency = 1,
@@ -303,7 +311,7 @@ local status = txt(statCard, wasLoaded and "Config tersimpan dimuat" or "Siap - 
 -- Dungeon UI. This module uses the game's own Auto Battle for attacks.
 -- The portal/next-floor logic is heuristic until real dungeon structures are known.
 local dungeonCard = new("Frame", {
-    Position = UDim2.fromOffset(18, 11), Size = UDim2.fromOffset(485, 286),
+    Position = UDim2.fromOffset(18, 11), Size = UDim2.fromOffset(485, 399),
     BackgroundColor3 = COLOR.card, BorderSizePixel = 0
 }, dungeonPage)
 round(dungeonCard, 10)
@@ -322,22 +330,26 @@ local function dungeonField(label, description, y, val)
     round(field, 7)
     return field
 end
-local heightBox = dungeonField("Hover height", "Rendah untuk combat (0 - 2 studs)", 68, cfg.dungeonHeight)
-local rangeBox = dungeonField("Target distance", "Dekat agar hit valid (2 - 5 studs)", 127, cfg.dungeonRange)
-txt(dungeonCard, "Red warning dodge: experimental / not invulnerability", 17, 168, 450, 17, 10, false, COLOR.muted)
-local dungeonToggle = button(dungeonCard, "DUNGEON: OFF", 17, 191, 145, 32, COLOR.card2)
-local nextToggle = button(dungeonCard, "NEXT: ON", 171, 191, 141, 32, COLOR.greenDark)
-local dodgeToggle = button(dungeonCard, "DODGE: OFF", 322, 191, 142, 32, COLOR.card2)
-local dungeonStop = button(dungeonCard, "STOP / LAND", 17, 239, 211, 33, COLOR.card2)
-local dungeonSave = button(dungeonCard, "SAVE DUNGEON", 240, 239, 224, 33, COLOR.blue)
+local heightBox = dungeonField("Hover height", "Low hover (0 - 2 studs)", 65, cfg.dungeonHeight)
+local rangeBox = dungeonField("Attack range", "2 - 30 studs | terlalu jauh bisa MISS", 120, cfg.dungeonRange)
+local dungeonSpeedBox = dungeonField("Dungeon speed", "20 - 150 | kecepatan follow + dodge", 175, cfg.dungeonMoveSpeed)
+txt(dungeonCard, "Dodge cek dinding; optional Noclip hanya saat dodge.", 17, 221, 450, 18, 10, false, COLOR.muted)
+local dungeonToggle = button(dungeonCard, "DUNGEON: OFF", 17, 244, 145, 32, COLOR.card2)
+local nextToggle = button(dungeonCard, "NEXT: ON", 171, 244, 141, 32, COLOR.greenDark)
+local dodgeToggle = button(dungeonCard, "DODGE: OFF", 322, 244, 142, 32, COLOR.card2)
+local noclipToggle = button(dungeonCard, "NOCLIP (DODGE): OFF", 17, 290, 447, 32, COLOR.card2)
+txt(dungeonCard, "Noclip bisa desync; gunakan saat dodge terjebak saja.", 17, 329, 440, 18, 10, false, COLOR.muted)
+local dungeonStop = button(dungeonCard, "STOP / LAND", 17, 354, 211, 32, COLOR.card2)
+local dungeonSave = button(dungeonCard, "SAVE DUNGEON", 240, 354, 224, 32, COLOR.blue)
 local dungeonStatCard = new("Frame", {
-    Position = UDim2.fromOffset(18, 308), Size = UDim2.fromOffset(485, 58),
+    Position = UDim2.fromOffset(18, 421), Size = UDim2.fromOffset(485, 78),
     BackgroundColor3 = COLOR.card, BorderSizePixel = 0
 }, dungeonPage)
 round(dungeonStatCard, 10)
 stroke(dungeonStatCard)
-local dungeonStateText = txt(dungeonStatCard, "Status: OFF - enter dungeon manually", 14, 7, 458, 22, 12, false)
-local dungeonTargetText = txt(dungeonStatCard, "Target: - | Auto Battle should be ON", 14, 30, 460, 19, 11, false, COLOR.muted)
+local dungeonStateText = txt(dungeonStatCard, "Status: OFF - enter dungeon manually", 14, 8, 458, 25, 12, false)
+local dungeonTargetText = txt(dungeonStatCard, "Target: - | Auto Battle should be ON", 14, 34, 460, 33, 11, false, COLOR.muted)
+dungeonTargetText.TextWrapped = true
 -- Info page
 local infoCard = new("Frame", {
     Position = UDim2.fromOffset(18, 11), Size = UDim2.fromOffset(485, 328),
@@ -345,7 +357,7 @@ local infoCard = new("Frame", {
 }, infoPage)
 round(infoCard, 10)
 stroke(infoCard)
-txt(infoCard, "RHYE Hub V3.2", 17, 14, 390, 27, 17, true)
+txt(infoCard, "RHYE Hub V3.3", 17, 14, 390, 27, 17, true)
 txt(infoCard, "Dark sidebar UI  |  Main / Dungeon / Info", 17, 42, 440, 22, 12, false, COLOR.muted)
 new("Frame", {Position = UDim2.fromOffset(17, 75), Size = UDim2.fromOffset(450, 1),
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, infoCard)
@@ -355,7 +367,7 @@ txt(infoCard, "Klik tombol ini, lalu tekan tombol keyboard baru.", 17, 116, 276,
 local dimButton = button(infoCard, "Dim: OFF", 298, 168, 164, 34, COLOR.card2)
 txt(infoCard, "Background dim (opsional)", 17, 165, 276, 37, 12, false)
 txt(infoCard, "Config disimpan secara lokal pada workspace executor.", 17, 219, 441, 25, 11, false, COLOR.muted)
-txt(infoCard, "Auto Dodge tidak kebal AoE; indikator non-Part mungkin tidak terbaca.", 17, 246, 454, 25, 11, false, COLOR.muted)
+txt(infoCard, "Wall-aware dodge dan Noclip opsional tidak menjamin kebal AoE.", 17, 246, 454, 25, 11, false, COLOR.muted)
 local saveInfo = button(infoCard, "SAVE SETTINGS", 17, 279, 445, 34, COLOR.greenDark)
 
 local floatButton = button(gui, "R", 18, 105, 48, 48, COLOR.greenDark)
@@ -538,7 +550,16 @@ local recentVisualParts = setmetatable({}, {__mode = "k"})
 local nearbyHazards = {}
 local lastHazardScan = -1e6
 local dodgeGoal = nil
+local dodgeWaypoint = nil
+local dodgeNoclipTravel = false
+local dodgeFailed = {}
+local dodgeRetry = 0
+local dodgeProgressPosition = nil
+local dodgeProgressAt = 0
 local dodgeHoldUntil = 0
+-- Original CanCollide flags must be restored when dodge/Hub ends.
+local collisionCache = setmetatable({}, {__mode = "k"})
+local noclipActive = false
 local dodgeCount = 0
 local lastDodgeLog = -1e6
 local dungeonCycle = 0
@@ -546,7 +567,27 @@ local function dungeonStatus(msg, targetName)
     dungeonStateText.Text = "Status: " .. msg
     dungeonTargetText.Text = "Target: " .. (targetName or "-")
 end
+local function setDodgeNoclip(enabled)
+    if enabled then
+        noclipActive = true
+        local char = player.Character
+        if not char then return end
+        for _, obj in ipairs(char:GetDescendants()) do
+            if obj:IsA("BasePart") then
+                if collisionCache[obj] == nil then collisionCache[obj] = obj.CanCollide end
+                if obj.CanCollide then obj.CanCollide = false end
+            end
+        end
+    elseif noclipActive then
+        noclipActive = false
+        for part, wasCollidable in pairs(collisionCache) do
+            if part.Parent then pcall(function() part.CanCollide = wasCollidable end) end
+            collisionCache[part] = nil
+        end
+    end
+end
 local function land()
+    setDodgeNoclip(false)
     if hoverMover then pcall(function() hoverMover:Destroy() end) end
     if hoverGyro then pcall(function() hoverGyro:Destroy() end) end
     hoverMover, hoverGyro, hoverRoot = nil, nil, nil
@@ -558,6 +599,12 @@ local function stopDungeon(reason)
     noEnemySince = nil
     cachedGate = nil
     dodgeGoal = nil
+    dodgeWaypoint = nil
+    dodgeNoclipTravel = false
+    dodgeFailed = {}
+    dodgeRetry = 0
+    dodgeProgressPosition = nil
+    dodgeProgressAt = 0
     dodgeHoldUntil = 0
     nearbyHazards = {}
     land()
@@ -566,19 +613,25 @@ local function stopDungeon(reason)
     dungeonStatus(reason or "OFF - landed", "-")
 end
 local function applyDungeonFields()
-    local h, r = tonumber(heightBox.Text), tonumber(rangeBox.Text)
+    local h, r, speed = tonumber(heightBox.Text), tonumber(rangeBox.Text), tonumber(dungeonSpeedBox.Text)
     if not h or h ~= h or h < 0 or h > 2 then
         dungeonStatus("Hover height must be 0 - 2", "-")
         return false
     end
-    if not r or r ~= r or r < 2 or r > 5 then
-        dungeonStatus("Target distance must be 2 - 5", "-")
+    if not r or r ~= r or r < 2 or r > 30 then
+        dungeonStatus("Attack range must be 2 - 30", "-")
+        return false
+    end
+    if not speed or speed ~= speed or speed < 20 or speed > 150 then
+        dungeonStatus("Dungeon speed must be 20 - 150", "-")
         return false
     end
     cfg.dungeonHeight = math.floor(h)
     cfg.dungeonRange = math.floor(r)
+    cfg.dungeonMoveSpeed = math.floor(speed)
     heightBox.Text = tostring(cfg.dungeonHeight)
     rangeBox.Text = tostring(cfg.dungeonRange)
+    dungeonSpeedBox.Text = tostring(cfg.dungeonMoveSpeed)
     return true
 end
 local function makeHover(root)
@@ -587,9 +640,9 @@ local function makeHover(root)
     hoverRoot = root
     hoverMover = Instance.new("BodyPosition")
     hoverMover.Name = "RHYEHubDungeonHover"
-    hoverMover.MaxForce = Vector3.new(115000, 135000, 115000)
-    hoverMover.P = 6000
-    hoverMover.D = 1100
+    hoverMover.MaxForce = Vector3.new(210000, 245000, 210000)
+    hoverMover.P = 10200
+    hoverMover.D = 1400
     hoverMover.Position = root.Position
     hoverMover.Parent = root
     hoverGyro = Instance.new("BodyGyro")
@@ -710,7 +763,7 @@ local function approach(destination, facing, dt, movementSpeed)
     end
     makeHover(root)
     local delta = destination - root.Position
-    local maxStep = math.clamp(dt, 0.05, 0.4) * (movementSpeed or 44)
+    local maxStep = math.clamp(dt, 0.03, 0.25) * (movementSpeed or cfg.dungeonMoveSpeed)
     hoverMover.Position = root.Position + (delta.Magnitude > maxStep and delta.Unit * maxStep or delta)
     local look = Vector3.new(facing.X, root.Position.Y, facing.Z)
     if (look - root.Position).Magnitude > 0.5 then
@@ -806,77 +859,302 @@ local function pointInsideRed(point)
     return nil
 end
 
-local function validDodgeGround(point)
-    local cast = RaycastParams.new()
-    cast.FilterType = Enum.RaycastFilterType.Exclude
-    cast.FilterDescendantsInstances = player.Character and {player.Character} or {}
-    local hit = workspace:Raycast(point + Vector3.new(0, 11, 0),
-        Vector3.new(0, -38, 0), cast)
-    if not hit or hit.Normal.Y < 0.40 then return false end
-    -- Avoid dodging off platforms or cliffs.
-    return math.abs((point.Y - 2.6) - hit.Position.Y) < 9
+-- Wall-aware dodge: the old version checked only destination floor and red color.
+-- V3.3 rejects blocked straight routes, tries a 2-segment side path, and
+-- can optionally cross blocking parts ONLY during a danger dodge.
+local function rayParams(excludeEnemy)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.RespectCanCollide = true
+    params.IgnoreWater = true
+    local ignore = {}
+    if player.Character then ignore[#ignore + 1] = player.Character end
+    if excludeEnemy then ignore[#ignore + 1] = excludeEnemy end
+    params.FilterDescendantsInstances = ignore
+    return params
 end
-
-local function chooseDodgeGoal(root, enemyPart)
-    local rootPos = root.Position
-    local towards = Vector3.new(enemyPart.Position.X - rootPos.X, 0,
-        enemyPart.Position.Z - rootPos.Z)
-    if towards.Magnitude < 0.2 then towards = root.CFrame.LookVector end
-    towards = Vector3.new(towards.X, 0, towards.Z).Unit
-    local side = Vector3.new(-towards.Z, 0, towards.X)
-    local dirs = {side, -side, -towards,
-        (side - towards * 0.7).Unit,
-        (-side - towards * 0.7).Unit, towards}
-    local best, bestScore = nil, math.huge
-    for _, radius in ipairs({5, 7, 10, 13, 16}) do
-        for _, direction in ipairs(dirs) do
-            local p = rootPos + direction * radius
-            p = Vector3.new(p.X, enemyPart.Position.Y + cfg.dungeonHeight, p.Z)
-            local horizontal = (Vector3.new(p.X, 0, p.Z)
-                - Vector3.new(enemyPart.Position.X, 0, enemyPart.Position.Z)).Magnitude
-            if not pointInsideRed(p) and validDodgeGround(p) then
-                -- Prefer a sidestep that stays close enough to keep attacking.
-                local score = math.abs(horizontal - cfg.dungeonRange) * 1.6
-                    + radius * 0.35
-                if score < bestScore then best, bestScore = p, score end
+local function groundBelow(point)
+    local hit = workspace:Raycast(point + Vector3.new(0, 8, 0),
+        Vector3.new(0, -24, 0), rayParams())
+    if hit and hit.Normal.Y > 0.60 then return hit.Position end
+    return nil
+end
+local function validDodgeGround(point)
+    local ground = groundBelow(point)
+    return ground and math.abs((point.Y - 2.8) - ground.Y) < 5 or false
+end
+local function clearTravelLine(a, b, excludeEnemy)
+    local direction = b - a
+    if direction.Magnitude < 1 then return true end
+    local side = Vector3.new(-direction.Z, 0, direction.X)
+    if side.Magnitude < 0.05 then side = Vector3.new(1,0,0) else side = side.Unit end
+    local params = rayParams(excludeEnemy)
+    -- Three torso-level rays approximating player clearance (not a full capsule cast).
+    for _, offset in ipairs({0, 1.15, -1.15}) do
+        local off = side * offset
+        local origin = a + off
+        local hit = workspace:Raycast(origin, b + off - origin, params)
+        if hit and hit.Distance < direction.Magnitude - 0.7 then
+            return false, hit.Instance
+        end
+    end
+    return true
+end
+local function segmentCrossesRed(a, b)
+    for i = 1, 7 do
+        -- Once already inside the hazard, permit exiting, not passing back through it.
+        local fraction = i / 7
+        local point = a:Lerp(b, fraction)
+        if i >= 3 and pointInsideRed(point) then return true end
+    end
+    return false
+end
+local function findSideRoute(from, destination, enemyModel)
+    local travel = destination - from
+    local flat = Vector3.new(travel.X, 0, travel.Z)
+    if flat.Magnitude < 1 then return nil end
+    local forward = flat.Unit
+    local side = Vector3.new(-forward.Z, 0, forward.X)
+    local best, bestDist
+    for _, lateral in ipairs({4, 8, 12}) do
+        for _, sideSign in ipairs({1,-1}) do
+            for _, forwardStep in ipairs({0, 4, -4}) do
+                local point = from + side * lateral * sideSign + forward * forwardStep
+                if validDodgeGround(point) and not pointInsideRed(point)
+                    and clearTravelLine(from, point, enemyModel)
+                    and clearTravelLine(point, destination, enemyModel)
+                    and not segmentCrossesRed(point, destination) then
+                    local total = (point-from).Magnitude + (destination-point).Magnitude
+                    if not bestDist or total < bestDist then best, bestDist = point, total end
+                end
             end
         end
-        if best and radius >= 7 then break end
     end
     return best
 end
-
+-- Asynchronous PathfindingService fallback for winding corridors. It is
+-- intentionally cached for one dodge, never computed every Heartbeat.
+local pathRequestId = 0
+local pathPending = false
+local pathFailed = false
+local pathWaypoints = nil
+local pathIndex = 1
+local function clearPath()
+    pathRequestId = pathRequestId + 1
+    pathPending = false
+    pathFailed = false
+    pathWaypoints = nil
+    pathIndex = 1
+end
+local function requestPath(from, to, enemyModel)
+    if pathPending then return end
+    pathPending = true
+    pathFailed = false
+    pathRequestId = pathRequestId + 1
+    local requestId = pathRequestId
+    local fromPos, toPos = from, to
+    task.delay(2.5, function()
+        if pathPending and pathRequestId == requestId then
+            pathRequestId = pathRequestId + 1
+            pathPending = false
+            pathFailed = true
+            warn("[RHYE Hub DODGE] Wall-route planning timed out")
+        end
+    end)
+    task.spawn(function()
+        local ok, result = pcall(function()
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 2, AgentHeight = 5,
+                AgentCanJump = true, WaypointSpacing = 3
+            })
+            path:ComputeAsync(fromPos, toPos)
+            if path.Status ~= Enum.PathStatus.Success then return nil end
+            return path:GetWaypoints()
+        end)
+        if requestId ~= pathRequestId or not dungeonActive then return end
+        pathPending = false
+        local acceptable = ok and result and #result > 1
+        if acceptable then
+            -- Being inside the initial red marker is expected: exit from it.
+            -- Only reject later path segments that return into the red zone.
+            for index, step in ipairs(result) do
+                local at = Vector3.new(step.Position.X, fromPos.Y, step.Position.Z)
+                if index > 2 and (at-fromPos).Magnitude > 5 and pointInsideRed(at) then
+                    acceptable = false
+                    break
+                end
+            end
+        end
+        if acceptable then
+            pathWaypoints = result
+            pathIndex = 2
+            pathFailed = false
+        else
+            pathFailed = true
+        end
+    end)
+end
+local function dodgeKey(p)
+    return string.format("%d/%d", math.floor(p.X + 0.5), math.floor(p.Z + 0.5))
+end
+local function chooseDodgeGoal(root, enemyPart)
+    local from = root.Position
+    local direction = Vector3.new(enemyPart.Position.X - from.X, 0,
+        enemyPart.Position.Z - from.Z)
+    if direction.Magnitude < 0.2 then direction = root.CFrame.LookVector end
+    direction = Vector3.new(direction.X, 0, direction.Z).Unit
+    local side = Vector3.new(-direction.Z, 0, direction.X)
+    local dirs = {side, -side, -direction,
+        (side-direction*0.7).Unit, (-side-direction*0.7).Unit, direction}
+    local best, score = nil, math.huge
+    local fallback, fallbackScore = nil, math.huge
+    for _, radius in ipairs({4, 6, 9, 12, 16, 20}) do
+        for _, dir in ipairs(dirs) do
+            local p = from + dir * radius
+            p = Vector3.new(p.X, from.Y, p.Z)
+            local flat = Vector3.new(p.X-enemyPart.Position.X,0,p.Z-enemyPart.Position.Z)
+            if not dodgeFailed[dodgeKey(p)] and not pointInsideRed(p)
+                and validDodgeGround(p) then
+                local s = math.abs(flat.Magnitude-cfg.dungeonRange) * 1.0 + radius*0.20
+                local open = clearTravelLine(from,p,enemyPart.Parent)
+                local via = not open and radius <= 12
+                    and findSideRoute(from,p,enemyPart.Parent) or nil
+                if (open or via) and s < score then
+                    best, score = {goal=p, via=via, noclip=false}, s
+                end
+                if s < fallbackScore then
+                    fallback, fallbackScore = {goal=p,via=nil,noclip=true},s
+                end
+            end
+        end
+    end
+    if best then return best end
+    if cfg.dungeonDodgeNoclip then return fallback end
+    return fallback and {goal=fallback.goal, via=nil, blocked=true} or nil
+end
+local function resetDodgeState()
+    dodgeGoal = nil
+    dodgeWaypoint = nil
+    dodgeNoclipTravel = false
+    dodgeRetry = 0
+    dodgeFailed = {}
+    dodgeProgressPosition = nil
+    dodgeProgressAt = 0
+    clearPath()
+    setDodgeNoclip(false)
+end
 local function attemptAutoDodge(root, monsterPart, combatGoal, dt)
-    if not cfg.dungeonAutoDodge then return false end
+    if not cfg.dungeonAutoDodge then
+        if dodgeGoal or noclipActive then resetDodgeState() end
+        return false
+    end
     local now = os.clock()
     refreshHazards(root.Position)
-    local threat = pointInsideRed(root.Position) or pointInsideRed(combatGoal)
-    if threat then
-        if not dodgeGoal or now > dodgeHoldUntil or pointInsideRed(dodgeGoal) then
-            dodgeGoal = chooseDodgeGoal(root, monsterPart)
-            dodgeHoldUntil = now + 0.85
+    local danger = pointInsideRed(root.Position) or pointInsideRed(combatGoal)
+    if danger then
+        if not dodgeGoal or pointInsideRed(dodgeGoal) then
+            local option = chooseDodgeGoal(root, monsterPart)
+            if not option then
+                stopDungeon("No safe dodge spot - stopped")
+                return true
+            end
+            dodgeGoal = option.goal
+            dodgeWaypoint = option.via
+            dodgeNoclipTravel = option.noclip or false
+            if option.blocked then
+                -- Do not keep pushing against a solid wall. Ask pathfinding
+                -- for a longer route; Noclip remains OFF by default.
+                requestPath(root.Position, dodgeGoal, monsterPart.Parent)
+            end
+            dodgeProgressPosition = root.Position
+            dodgeProgressAt = now
+            dodgeHoldUntil = now + 1.0
             dodgeCount = dodgeCount + 1
             if now - lastDodgeLog > 1.5 then
-                print(string.format("[RHYE Hub DODGE] red indicator: %s | candidates %d",
-                    threat:GetFullName(), #nearbyHazards))
+                print(string.format("[RHYE Hub DODGE] %s | hazards=%d | route=%s",
+                    danger.Name, #nearbyHazards,
+                    option.blocked and "PATHFIND" or (option.noclip and "NOCLIP" or "CLEAR")))
                 lastDodgeLog = now
             end
         end
-        if not dodgeGoal then
-            stopDungeon("Red zone; no safe dodge floor found")
-            return true
-        end
-    elseif dodgeGoal and now > dodgeHoldUntil then
-        dodgeGoal = nil
+    elseif dodgeGoal and (now > dodgeHoldUntil or not pointInsideRed(root.Position)) then
+        resetDodgeState()
+        return false
     end
-    if dodgeGoal then
-        approach(dodgeGoal, monsterPart.Position, dt, 70)
-        dungeonStatus("AUTO DODGE: avoiding red warning",
-            string.format("%s | red parts: %d | dodges: %d",
-                monsterPart.Parent.Name, #nearbyHazards, dodgeCount))
+    if not dodgeGoal then return false end
+    if pathFailed and not cfg.dungeonDodgeNoclip then
+        stopDungeon("No wall-safe dodge route - stopped")
         return true
     end
-    return false
+    if pathPending and not cfg.dungeonDodgeNoclip then
+        makeHover(root)
+        hoverMover.Position = root.Position
+        dungeonStatus("DODGE: checking wall-safe route", monsterPart.Parent.Name)
+        return true
+    end
+    local travelGoal = dodgeWaypoint or dodgeGoal
+    if pathWaypoints then
+        if pathIndex <= #pathWaypoints then
+            local p = pathWaypoints[pathIndex].Position
+            travelGoal = Vector3.new(p.X, root.Position.Y, p.Z)
+            if (root.Position - travelGoal).Magnitude < 2.2 then
+                pathIndex = pathIndex + 1
+            end
+        else
+            pathWaypoints = nil
+        end
+    end
+    if dodgeWaypoint and (root.Position-dodgeWaypoint).Magnitude < 2.3 then
+        dodgeWaypoint = nil
+        travelGoal = dodgeGoal
+    end
+    if pathFailed and cfg.dungeonDodgeNoclip then
+        dodgeNoclipTravel = true
+    end
+    if not dodgeNoclipTravel and not pathPending and not pathWaypoints
+        and not clearTravelLine(root.Position,travelGoal,monsterPart.Parent) then
+        if cfg.dungeonDodgeNoclip then
+            dodgeNoclipTravel = true
+        else
+            requestPath(root.Position,dodgeGoal,monsterPart.Parent)
+        end
+    end
+    if not dodgeNoclipTravel and not pathPending and not pathWaypoints
+        and not clearTravelLine(root.Position,travelGoal,monsterPart.Parent) then
+        -- Never push against a wall without an alternate route.
+        makeHover(root)
+        hoverMover.Position = root.Position
+        dungeonStatus("Wall ahead - searching path", monsterPart.Parent.Name)
+        return true
+    end
+    setDodgeNoclip(dodgeNoclipTravel and cfg.dungeonDodgeNoclip)
+    if now - dodgeProgressAt > 1.0 then
+        if (root.Position - (dodgeProgressPosition or root.Position)).Magnitude < 0.55
+            and (root.Position - travelGoal).Magnitude > 2.1 then
+            dodgeRetry = dodgeRetry + 1
+            dodgeFailed[dodgeKey(dodgeGoal)] = true
+            local option = chooseDodgeGoal(root,monsterPart)
+            if option and dodgeRetry <= 3 then
+                clearPath()
+                dodgeGoal = option.goal
+                dodgeWaypoint = option.via
+                dodgeNoclipTravel = option.noclip or false
+                if option.blocked then requestPath(root.Position,dodgeGoal,monsterPart.Parent) end
+            else
+                stopDungeon("Dodge blocked by wall - stopped safely")
+                return true
+            end
+        end
+        dodgeProgressPosition = root.Position
+        dodgeProgressAt = now
+    end
+    approach(travelGoal,monsterPart.Position,dt,
+        math.min(150,cfg.dungeonMoveSpeed*1.35))
+    dungeonStatus(pathPending and "DODGE: planning around wall"
+        or (dodgeNoclipTravel and "DODGE: optional noclip" or "DODGE: safe path"),
+        string.format("%s | %d red | range %d | speed %d",
+            monsterPart.Parent.Name,#nearbyHazards,cfg.dungeonRange,cfg.dungeonMoveSpeed))
+    return true
 end
 
 local function pickTarget(root)
@@ -925,6 +1203,20 @@ local function flyStep(dt)
         local goal = part.Position + facingAway.Unit * cfg.dungeonRange
             + Vector3.new(0, cfg.dungeonHeight, 0)
         if attemptAutoDodge(root, part, goal, dt) then return end
+        -- Do not ram solid walls during ordinary target following.
+        local open = clearTravelLine(root.Position,goal,part.Parent)
+        if not open then
+            local via = findSideRoute(root.Position,goal,part.Parent)
+            if via then
+                approach(via,part.Position,dt)
+                dungeonStatus("Following around obstacle", selected.model.Name)
+            else
+                makeHover(root)
+                hoverMover.Position = root.Position
+                dungeonStatus("Combat route blocked - change position", selected.model.Name)
+            end
+            return
+        end
         approach(goal, part.Position, dt)
         local separation = (root.Position - part.Position).Magnitude
         dungeonStatus(selected.model.Name:lower():find("boss", 1, true)
@@ -934,7 +1226,7 @@ local function flyStep(dt)
         return
     end
     dungeonTarget = nil
-    dodgeGoal = nil
+    resetDodgeState()
     if not noEnemySince then noEnemySince = now end
     if not cfg.dungeonAutoNext then
         land()
@@ -956,7 +1248,7 @@ local function flyStep(dt)
     end
     local gatePart = cachedGate.part
     local goal = gatePart.Position + Vector3.new(0, 3, 0)
-    approach(goal, gatePart.Position, dt)
+    approach(goal, gatePart.Position, dt, cfg.dungeonMoveSpeed)
     dungeonStatus("Approaching next gate", gatePart.Name)
     if (root.Position - gatePart.Position).Magnitude < 11 then
         local prompt = cachedGate.prompt
@@ -991,7 +1283,7 @@ listen(dungeonToggle.MouseButton1Click, function()
     cachedGate = nil
     dungeonToggle.Text = "DUNGEON: ON"
     dungeonToggle.BackgroundColor3 = COLOR.greenDark
-    dodgeGoal = nil
+    resetDodgeState()
     nearbyHazards = {}
     lastHazardScan = -1e6
     dungeonStatus("Scanning nearby monsters", "Use game Auto Battle ON")
@@ -1003,13 +1295,22 @@ listen(nextToggle.MouseButton1Click, function()
 end)
 listen(dodgeToggle.MouseButton1Click, function()
     cfg.dungeonAutoDodge = not cfg.dungeonAutoDodge
-    dodgeGoal = nil
+    resetDodgeState()
     dodgeHoldUntil = 0
     nearbyHazards = {}
     dodgeToggle.Text = cfg.dungeonAutoDodge and "DODGE: ON" or "DODGE: OFF"
     dodgeToggle.BackgroundColor3 = cfg.dungeonAutoDodge and COLOR.greenDark or COLOR.card2
     dungeonStatus(cfg.dungeonAutoDodge and "Auto Dodge enabled (red Parts only)"
         or "Auto Dodge disabled", "-")
+end)
+listen(noclipToggle.MouseButton1Click, function()
+    cfg.dungeonDodgeNoclip = not cfg.dungeonDodgeNoclip
+    noclipToggle.Text = cfg.dungeonDodgeNoclip
+        and "NOCLIP (DODGE): ON" or "NOCLIP (DODGE): OFF"
+    noclipToggle.BackgroundColor3 = cfg.dungeonDodgeNoclip and COLOR.greenDark or COLOR.card2
+    if not cfg.dungeonDodgeNoclip then setDodgeNoclip(false) end
+    dungeonStatus(cfg.dungeonDodgeNoclip
+        and "Noclip enabled only during blocked dodge" or "Noclip disabled", "-")
 end)
 listen(workspace.DescendantAdded, function(obj)
     if obj:IsA("BasePart") then recentVisualParts[obj] = os.clock() end
@@ -1026,7 +1327,7 @@ end)
 listen(RunService.Heartbeat, function()
     if not dungeonActive then return end
     local now = os.clock()
-    if now - lastMovementClock < 0.15 then return end
+    if now - lastMovementClock < 0.08 then return end
     local dt = now - lastMovementClock
     lastMovementClock = now
     local ok, err = pcall(flyStep, dt)
@@ -1039,6 +1340,8 @@ nextToggle.Text = cfg.dungeonAutoNext and "NEXT: ON" or "NEXT: OFF"
 nextToggle.BackgroundColor3 = cfg.dungeonAutoNext and COLOR.greenDark or COLOR.card2
 dodgeToggle.Text = cfg.dungeonAutoDodge and "DODGE: ON" or "DODGE: OFF"
 dodgeToggle.BackgroundColor3 = cfg.dungeonAutoDodge and COLOR.greenDark or COLOR.card2
+noclipToggle.Text = cfg.dungeonDodgeNoclip and "NOCLIP (DODGE): ON" or "NOCLIP (DODGE): OFF"
+noclipToggle.BackgroundColor3 = cfg.dungeonDodgeNoclip and COLOR.greenDark or COLOR.card2
 
 -- Character respawn and single Heartbeat update loop.
 listen(player.CharacterAdded, function(char)
@@ -1117,6 +1420,6 @@ listen(close.MouseButton1Click, shutdown)
 listen(gui.Destroying, shutdown)
 updateToggles()
 setPage("Main")
-print("[RHYE Hub V3.2] Loaded. Keybind:", cfg.hotkey)
-print("[RHYE Hub V3.2] Save config:", CONFIG_FILE)
-print("[RHYE Hub V3.2] Auto Dodge: experimental red BasePart telegraphs only; damage may still hit.")
+print("[RHYE Hub V3.3] Loaded. Keybind:", cfg.hotkey)
+print("[RHYE Hub V3.3] Save config:", CONFIG_FILE)
+print("[RHYE Hub V3.3] Wall-aware dodge, optional noclip only during dodge. Combat range server-limited.")
