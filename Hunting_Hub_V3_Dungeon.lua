@@ -1,9 +1,10 @@
 --[[
-    HUNTING HUB V3.1 | Combat Range Fix + Dungeon Assistant
+    RHYE HUB V3.2 | Dungeon Assistant + Experimental Red Telegraph Dodge
     Main > Config Movement / Config Dungeon, Info, Save Config, Keybind
     Visual inspired by a dark sidebar-style hub.
     Dungeon module follows nearby enemies while the native Auto Battle handles attacks.
     It does NOT spoof attack/damage/reward requests or bypass progression checks.
+    Dodge observes nearby RED world parts; purely visual GPU effects may be invisible to it.
     Executor file APIs are optional; config persistence uses them when available.
 ]]
 
@@ -20,10 +21,10 @@ while not player and os.clock() < waitUntil do
     task.wait(0.15)
     player = Players.LocalPlayer
 end
-if not player then warn("[Hunting Hub V2] LocalPlayer not available") return end
+if not player then warn("[RHYE Hub] LocalPlayer not available") return end
 
 local playerGui = player:WaitForChild("PlayerGui", 12)
-if not playerGui then warn("[Hunting Hub V2] PlayerGui not available") return end
+if not playerGui then warn("[RHYE Hub] PlayerGui not available") return end
 
 -- Cleanup from previous execution. Avoid stacking Heartbeat/input handlers.
 local globalEnv = _G
@@ -36,8 +37,13 @@ end
 if globalEnv.__HuntingHubV3 then
     pcall(function() globalEnv.__HuntingHubV3() end)
 end
-local oldGui = playerGui:FindFirstChild("HuntingHubV3")
-if oldGui then oldGui:Destroy() end
+if globalEnv.__RHYEHubV3 then
+    pcall(function() globalEnv.__RHYEHubV3() end)
+end
+for _, previousName in ipairs({"HuntingHubV3", "RHYEHubV3_2"}) do
+    local previous = playerGui:FindFirstChild(previousName)
+    if previous then previous:Destroy() end
+end
 
 local COLOR = {
     bg = Color3.fromRGB(14, 16, 20),
@@ -53,12 +59,15 @@ local COLOR = {
     blue = Color3.fromRGB(74, 119, 199)
 }
 local WIDTH, HEIGHT = 710, 434
-local CONFIG_DIR = "HuntingHubV2"
+local CONFIG_DIR = "RHYEHub"
 local CONFIG_FILE = CONFIG_DIR .. "/config.json"
+-- Migrate old V2/V3.1 settings automatically on the first run.
+local LEGACY_CONFIG_FILE = "HuntingHubV2/config.json"
 local cfg = {
     dungeonHeight = 1,
     dungeonRange = 4,
     dungeonAutoNext = true,
+    dungeonAutoDodge = false,
     walkSpeed = 36,
     jumpPower = 50,
     speedOn = false,
@@ -71,13 +80,23 @@ local cfg = {
 local function loadConfig()
     if type(readfile) ~= "function" then return false end
     local ok, result = pcall(function()
-        if type(isfile) == "function" and not isfile(CONFIG_FILE) then return nil end
-        return HttpService:JSONDecode(readfile(CONFIG_FILE))
+        local path = CONFIG_FILE
+        if type(isfile) == "function" then
+            if not isfile(path) then
+                if isfile(LEGACY_CONFIG_FILE) then
+                    path = LEGACY_CONFIG_FILE
+                else
+                    return nil
+                end
+            end
+        end
+        return HttpService:JSONDecode(readfile(path))
     end)
     if not ok or type(result) ~= "table" then return false end
     if type(result.dungeonHeight) == "number" then cfg.dungeonHeight = math.clamp(math.floor(result.dungeonHeight), 0, 2) end
     if type(result.dungeonRange) == "number" then cfg.dungeonRange = math.clamp(math.floor(result.dungeonRange), 2, 5) end
     if type(result.dungeonAutoNext) == "boolean" then cfg.dungeonAutoNext = result.dungeonAutoNext end
+    if type(result.dungeonAutoDodge) == "boolean" then cfg.dungeonAutoDodge = result.dungeonAutoDodge end
     if type(result.walkSpeed) == "number" then cfg.walkSpeed = math.clamp(math.floor(result.walkSpeed + 0.5), 8, 150) end
     if type(result.jumpPower) == "number" then cfg.jumpPower = math.clamp(math.floor(result.jumpPower + 0.5), 10, 120) end
     if type(result.speedOn) == "boolean" then cfg.speedOn = result.speedOn end
@@ -147,7 +166,7 @@ local function button(parent, text, x, y, w, h, color)
 end
 
 local gui = new("ScreenGui", {
-    Name = "HuntingHubV3", ResetOnSpawn = false,
+    Name = "RHYEHubV3_2", ResetOnSpawn = false,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
     DisplayOrder = 9000, IgnoreGuiInset = true
 }, playerGui)
@@ -195,9 +214,9 @@ local logo = new("Frame", {
     BackgroundColor3 = COLOR.greenDark, BorderSizePixel = 0
 }, side)
 round(logo, 10)
-txt(logo, "H", 12, 3, 24, 30, 18, true, Color3.fromRGB(178, 242, 193))
-txt(side, "Hunting Hub", 62, 19, 123, 21, 15, true)
-txt(side, "v3.1  |  combat fix", 62, 40, 111, 18, 10, false, COLOR.muted)
+txt(logo, "R", 12, 3, 24, 30, 18, true, Color3.fromRGB(178, 242, 193))
+txt(side, "RHYE Hub", 62, 19, 123, 21, 15, true)
+txt(side, "v3.2  |  auto dodge", 62, 40, 111, 18, 10, false, COLOR.muted)
 new("Frame", {Position = UDim2.fromOffset(14, 70), Size = UDim2.fromOffset(160, 1),
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, side)
 txt(side, "NAVIGATION", 17, 87, 145, 16, 10, true, COLOR.muted)
@@ -290,7 +309,7 @@ local dungeonCard = new("Frame", {
 round(dungeonCard, 10)
 stroke(dungeonCard)
 txt(dungeonCard, "Config Dungeon", 16, 9, 360, 25, 15, true)
-txt(dungeonCard, "Aktifkan Auto Battle game. Low hover bukan anti-damage.", 16, 34, 453, 22, 11, false, COLOR.muted)
+txt(dungeonCard, "Auto Battle game ON. Auto Dodge membaca zona merah berupa Parts.", 16, 34, 460, 22, 11, false, COLOR.muted)
 local function dungeonField(label, description, y, val)
     txt(dungeonCard, label, 17, y, 261, 23, 13, true)
     txt(dungeonCard, description, 17, y + 23, 295, 18, 10, false, COLOR.muted)
@@ -305,8 +324,10 @@ local function dungeonField(label, description, y, val)
 end
 local heightBox = dungeonField("Hover height", "Rendah untuk combat (0 - 2 studs)", 68, cfg.dungeonHeight)
 local rangeBox = dungeonField("Target distance", "Dekat agar hit valid (2 - 5 studs)", 127, cfg.dungeonRange)
-local dungeonToggle = button(dungeonCard, "DUNGEON: OFF", 17, 192, 211, 32, COLOR.card2)
-local nextToggle = button(dungeonCard, "NEXT STAGE: ON", 240, 192, 224, 32, COLOR.greenDark)
+txt(dungeonCard, "Red warning dodge: experimental / not invulnerability", 17, 168, 450, 17, 10, false, COLOR.muted)
+local dungeonToggle = button(dungeonCard, "DUNGEON: OFF", 17, 191, 145, 32, COLOR.card2)
+local nextToggle = button(dungeonCard, "NEXT: ON", 171, 191, 141, 32, COLOR.greenDark)
+local dodgeToggle = button(dungeonCard, "DODGE: OFF", 322, 191, 142, 32, COLOR.card2)
 local dungeonStop = button(dungeonCard, "STOP / LAND", 17, 239, 211, 33, COLOR.card2)
 local dungeonSave = button(dungeonCard, "SAVE DUNGEON", 240, 239, 224, 33, COLOR.blue)
 local dungeonStatCard = new("Frame", {
@@ -324,7 +345,7 @@ local infoCard = new("Frame", {
 }, infoPage)
 round(infoCard, 10)
 stroke(infoCard)
-txt(infoCard, "Hunting Hub V3", 17, 14, 390, 27, 17, true)
+txt(infoCard, "RHYE Hub V3.2", 17, 14, 390, 27, 17, true)
 txt(infoCard, "Dark sidebar UI  |  Main / Dungeon / Info", 17, 42, 440, 22, 12, false, COLOR.muted)
 new("Frame", {Position = UDim2.fromOffset(17, 75), Size = UDim2.fromOffset(450, 1),
     BackgroundColor3 = COLOR.stroke, BorderSizePixel = 0}, infoCard)
@@ -334,10 +355,10 @@ txt(infoCard, "Klik tombol ini, lalu tekan tombol keyboard baru.", 17, 116, 276,
 local dimButton = button(infoCard, "Dim: OFF", 298, 168, 164, 34, COLOR.card2)
 txt(infoCard, "Background dim (opsional)", 17, 165, 276, 37, 12, false)
 txt(infoCard, "Config disimpan secara lokal pada workspace executor.", 17, 219, 441, 25, 11, false, COLOR.muted)
-txt(infoCard, "Server game mungkin menolak atau mereset perubahan movement.", 17, 246, 454, 25, 11, false, COLOR.muted)
+txt(infoCard, "Auto Dodge tidak kebal AoE; indikator non-Part mungkin tidak terbaca.", 17, 246, 454, 25, 11, false, COLOR.muted)
 local saveInfo = button(infoCard, "SAVE SETTINGS", 17, 279, 445, 34, COLOR.greenDark)
 
-local floatButton = button(gui, "H", 18, 105, 48, 48, COLOR.greenDark)
+local floatButton = button(gui, "R", 18, 105, 48, 48, COLOR.greenDark)
 floatButton.Visible = false
 stroke(floatButton, Color3.fromRGB(95, 175, 115))
 
@@ -512,6 +533,14 @@ local lastScanTime = 0
 local cachedEnemies = {}
 local cachedGate = nil
 local lastMovementClock = os.clock()
+-- Red telegraph detector: passive world-part observation, no remotes.
+local recentVisualParts = setmetatable({}, {__mode = "k"})
+local nearbyHazards = {}
+local lastHazardScan = -1e6
+local dodgeGoal = nil
+local dodgeHoldUntil = 0
+local dodgeCount = 0
+local lastDodgeLog = -1e6
 local dungeonCycle = 0
 local function dungeonStatus(msg, targetName)
     dungeonStateText.Text = "Status: " .. msg
@@ -528,6 +557,9 @@ local function stopDungeon(reason)
     dungeonTarget = nil
     noEnemySince = nil
     cachedGate = nil
+    dodgeGoal = nil
+    dodgeHoldUntil = 0
+    nearbyHazards = {}
     land()
     dungeonToggle.Text = "DUNGEON: OFF"
     dungeonToggle.BackgroundColor3 = COLOR.card2
@@ -554,14 +586,14 @@ local function makeHover(root)
     land()
     hoverRoot = root
     hoverMover = Instance.new("BodyPosition")
-    hoverMover.Name = "HuntingHubDungeonHover"
+    hoverMover.Name = "RHYEHubDungeonHover"
     hoverMover.MaxForce = Vector3.new(115000, 135000, 115000)
     hoverMover.P = 6000
     hoverMover.D = 1100
     hoverMover.Position = root.Position
     hoverMover.Parent = root
     hoverGyro = Instance.new("BodyGyro")
-    hoverGyro.Name = "HuntingHubDungeonFacing"
+    hoverGyro.Name = "RHYEHubDungeonFacing"
     hoverGyro.MaxTorque = Vector3.new(0, 250000, 0)
     hoverGyro.P = 4500
     hoverGyro.D = 500
@@ -668,7 +700,7 @@ local function findGate(origin)
     end
     return best
 end
-local function approach(destination, facing, dt)
+local function approach(destination, facing, dt, movementSpeed)
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -678,13 +710,175 @@ local function approach(destination, facing, dt)
     end
     makeHover(root)
     local delta = destination - root.Position
-    local maxStep = math.clamp(dt, 0.05, 0.4) * 44
+    local maxStep = math.clamp(dt, 0.05, 0.4) * (movementSpeed or 44)
     hoverMover.Position = root.Position + (delta.Magnitude > maxStep and delta.Unit * maxStep or delta)
     local look = Vector3.new(facing.X, root.Position.Y, facing.Z)
     if (look - root.Position).Magnitude > 0.5 then
         hoverGyro.CFrame = CFrame.lookAt(root.Position, look)
     end
 end
+
+-- Telegraphed AoE scanner (experimental): supports nearby RED BaseParts/MeshParts.
+-- Does not see BillboardGui, screen effects, Beams or purely GPU particle textures.
+-- IMPORTANT: Red visual objects are not proof of actual server hitboxes.
+local hazardWords = {
+    "telegraph", "warning", "danger", "aoe", "attackzone", "hitarea",
+    "redzone", "spikeline", "spike", "indicator", "hazard", "attackpreview"
+}
+local function isRedWarningPart(part, origin)
+    if not part:IsA("BasePart") or not part.Parent then return false end
+    if part.Transparency >= 0.96 then return false end
+    if (part.Position - origin).Magnitude > 44 then return false end
+    if math.abs(part.Position.Y - origin.Y) > 9 then return false end
+    local color = part.Color
+    if not (color.R >= 0.60 and color.R >= color.G * 1.65
+        and color.R >= color.B * 1.55) then return false end
+    local size = part.Size
+    if math.max(size.X, size.Z) < 2 or size.X * size.Z < 3 then return false end
+    local named = hasTerm(normalizedName(part.Name), hazardWords)
+    local ancestor = part.Parent
+    for _ = 1, 3 do
+        if not ancestor or ancestor == workspace then break end
+        if hasTerm(normalizedName(ancestor.Name), hazardWords) then named = true end
+        ancestor = ancestor.Parent
+    end
+    -- Flat red markings are most likely to be ground telegraphs. Exclude red NPC parts.
+    local flat = size.Y <= math.max(2.5, math.min(size.X, size.Z) * 0.5)
+    if not (named or flat) then return false end
+    local creature = part:FindFirstAncestorOfClass("Model")
+    if creature and creature:FindFirstChildOfClass("Humanoid") and not named then
+        return false
+    end
+    local fresh = recentVisualParts[part] and os.clock() - recentVisualParts[part] < 15
+    local visual = part.Transparency > 0.02 or part.Material == Enum.Material.Neon
+    if not (named or fresh or visual) then return false end
+    return true
+end
+
+local function refreshHazards(origin)
+    local now = os.clock()
+    if now - lastHazardScan < 0.24 then return end
+    lastHazardScan = now
+    local found, used = {}, {}
+    local params = OverlapParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = player.Character and {player.Character} or {}
+    local ok, nearby = pcall(function()
+        return workspace:GetPartBoundsInRadius(origin, 44, params)
+    end)
+    if ok and nearby then
+        for _, part in ipairs(nearby) do
+            if not used[part] and isRedWarningPart(part, origin) then
+                found[#found + 1] = part
+                used[part] = true
+            end
+        end
+    end
+    -- CanQuery=false warning parts may be missing from spatial overlap queries.
+    -- Recently inserted parts are checked separately as a small fallback cache.
+    for part, inserted in pairs(recentVisualParts) do
+        if not part.Parent or now - inserted > 20 then
+            recentVisualParts[part] = nil
+        elseif not used[part] and isRedWarningPart(part, origin) then
+            found[#found + 1] = part
+            used[part] = true
+        end
+    end
+    nearbyHazards = found
+end
+
+local function pointInsideRed(point)
+    for _, part in ipairs(nearbyHazards) do
+        if part.Parent and math.abs(point.Y - part.Position.Y) < 9 then
+            -- Conservative world-space XZ bounds of an oriented red warning part.
+            local cf, sz = part.CFrame, part.Size
+            local right, up, look = cf.RightVector, cf.UpVector, cf.LookVector
+            local halfX = (math.abs(right.X) * sz.X + math.abs(up.X) * sz.Y
+                + math.abs(look.X) * sz.Z) * 0.5 + 1.2
+            local halfZ = (math.abs(right.Z) * sz.X + math.abs(up.Z) * sz.Y
+                + math.abs(look.Z) * sz.Z) * 0.5 + 1.2
+            if math.abs(point.X - part.Position.X) < halfX
+                and math.abs(point.Z - part.Position.Z) < halfZ then
+                return part
+            end
+        end
+    end
+    return nil
+end
+
+local function validDodgeGround(point)
+    local cast = RaycastParams.new()
+    cast.FilterType = Enum.RaycastFilterType.Exclude
+    cast.FilterDescendantsInstances = player.Character and {player.Character} or {}
+    local hit = workspace:Raycast(point + Vector3.new(0, 11, 0),
+        Vector3.new(0, -38, 0), cast)
+    if not hit or hit.Normal.Y < 0.40 then return false end
+    -- Avoid dodging off platforms or cliffs.
+    return math.abs((point.Y - 2.6) - hit.Position.Y) < 9
+end
+
+local function chooseDodgeGoal(root, enemyPart)
+    local rootPos = root.Position
+    local towards = Vector3.new(enemyPart.Position.X - rootPos.X, 0,
+        enemyPart.Position.Z - rootPos.Z)
+    if towards.Magnitude < 0.2 then towards = root.CFrame.LookVector end
+    towards = Vector3.new(towards.X, 0, towards.Z).Unit
+    local side = Vector3.new(-towards.Z, 0, towards.X)
+    local dirs = {side, -side, -towards,
+        (side - towards * 0.7).Unit,
+        (-side - towards * 0.7).Unit, towards}
+    local best, bestScore = nil, math.huge
+    for _, radius in ipairs({5, 7, 10, 13, 16}) do
+        for _, direction in ipairs(dirs) do
+            local p = rootPos + direction * radius
+            p = Vector3.new(p.X, enemyPart.Position.Y + cfg.dungeonHeight, p.Z)
+            local horizontal = (Vector3.new(p.X, 0, p.Z)
+                - Vector3.new(enemyPart.Position.X, 0, enemyPart.Position.Z)).Magnitude
+            if not pointInsideRed(p) and validDodgeGround(p) then
+                -- Prefer a sidestep that stays close enough to keep attacking.
+                local score = math.abs(horizontal - cfg.dungeonRange) * 1.6
+                    + radius * 0.35
+                if score < bestScore then best, bestScore = p, score end
+            end
+        end
+        if best and radius >= 7 then break end
+    end
+    return best
+end
+
+local function attemptAutoDodge(root, monsterPart, combatGoal, dt)
+    if not cfg.dungeonAutoDodge then return false end
+    local now = os.clock()
+    refreshHazards(root.Position)
+    local threat = pointInsideRed(root.Position) or pointInsideRed(combatGoal)
+    if threat then
+        if not dodgeGoal or now > dodgeHoldUntil or pointInsideRed(dodgeGoal) then
+            dodgeGoal = chooseDodgeGoal(root, monsterPart)
+            dodgeHoldUntil = now + 0.85
+            dodgeCount = dodgeCount + 1
+            if now - lastDodgeLog > 1.5 then
+                print(string.format("[RHYE Hub DODGE] red indicator: %s | candidates %d",
+                    threat:GetFullName(), #nearbyHazards))
+                lastDodgeLog = now
+            end
+        end
+        if not dodgeGoal then
+            stopDungeon("Red zone; no safe dodge floor found")
+            return true
+        end
+    elseif dodgeGoal and now > dodgeHoldUntil then
+        dodgeGoal = nil
+    end
+    if dodgeGoal then
+        approach(dodgeGoal, monsterPart.Position, dt, 70)
+        dungeonStatus("AUTO DODGE: avoiding red warning",
+            string.format("%s | red parts: %d | dodges: %d",
+                monsterPart.Parent.Name, #nearbyHazards, dodgeCount))
+        return true
+    end
+    return false
+end
+
 local function pickTarget(root)
     local nonBoss, boss, nd, bd
     nd, bd = math.huge, math.huge
@@ -730,14 +924,17 @@ local function flyStep(dt)
         -- Use only low-hover, short-range positioning; this does not bypass server combat rules.
         local goal = part.Position + facingAway.Unit * cfg.dungeonRange
             + Vector3.new(0, cfg.dungeonHeight, 0)
+        if attemptAutoDodge(root, part, goal, dt) then return end
         approach(goal, part.Position, dt)
         local separation = (root.Position - part.Position).Magnitude
         dungeonStatus(selected.model.Name:lower():find("boss", 1, true)
             and "BOSS - low hover" or "Combat - low hover",
-            string.format("%s | %.1f studs", selected.model.Name, separation))
+            string.format("%s | %.1f studs%s", selected.model.Name, separation,
+                cfg.dungeonAutoDodge and (" | red zones: " .. #nearbyHazards) or ""))
         return
     end
     dungeonTarget = nil
+    dodgeGoal = nil
     if not noEnemySince then noEnemySince = now end
     if not cfg.dungeonAutoNext then
         land()
@@ -774,7 +971,7 @@ local function flyStep(dt)
                 end)
                 if dungeonActive and dungeonCycle == cycle then
                     dungeonStatus(ok and "Gate interaction attempted" or "Gate interaction unavailable", gatePart.Name)
-                    if not ok then warn("[Hub V3] gate:", tostring(err)) end
+                    if not ok then warn("[RHYE Hub] gate:", tostring(err)) end
                 end
             end)
         end
@@ -794,12 +991,28 @@ listen(dungeonToggle.MouseButton1Click, function()
     cachedGate = nil
     dungeonToggle.Text = "DUNGEON: ON"
     dungeonToggle.BackgroundColor3 = COLOR.greenDark
+    dodgeGoal = nil
+    nearbyHazards = {}
+    lastHazardScan = -1e6
     dungeonStatus("Scanning nearby monsters", "Use game Auto Battle ON")
 end)
 listen(nextToggle.MouseButton1Click, function()
     cfg.dungeonAutoNext = not cfg.dungeonAutoNext
-    nextToggle.Text = cfg.dungeonAutoNext and "NEXT STAGE: ON" or "NEXT STAGE: OFF"
+    nextToggle.Text = cfg.dungeonAutoNext and "NEXT: ON" or "NEXT: OFF"
     nextToggle.BackgroundColor3 = cfg.dungeonAutoNext and COLOR.greenDark or COLOR.card2
+end)
+listen(dodgeToggle.MouseButton1Click, function()
+    cfg.dungeonAutoDodge = not cfg.dungeonAutoDodge
+    dodgeGoal = nil
+    dodgeHoldUntil = 0
+    nearbyHazards = {}
+    dodgeToggle.Text = cfg.dungeonAutoDodge and "DODGE: ON" or "DODGE: OFF"
+    dodgeToggle.BackgroundColor3 = cfg.dungeonAutoDodge and COLOR.greenDark or COLOR.card2
+    dungeonStatus(cfg.dungeonAutoDodge and "Auto Dodge enabled (red Parts only)"
+        or "Auto Dodge disabled", "-")
+end)
+listen(workspace.DescendantAdded, function(obj)
+    if obj:IsA("BasePart") then recentVisualParts[obj] = os.clock() end
 end)
 listen(dungeonStop.MouseButton1Click, function() stopDungeon("Stopped by user") end)
 listen(dungeonSave.MouseButton1Click, function()
@@ -818,12 +1031,14 @@ listen(RunService.Heartbeat, function()
     lastMovementClock = now
     local ok, err = pcall(flyStep, dt)
     if not ok then
-        warn("[Hunting Hub V3 Dungeon]", tostring(err))
+        warn("[RHYE Hub Dungeon]", tostring(err))
         stopDungeon("Error - stopped safely")
     end
 end)
-nextToggle.Text = cfg.dungeonAutoNext and "NEXT STAGE: ON" or "NEXT STAGE: OFF"
+nextToggle.Text = cfg.dungeonAutoNext and "NEXT: ON" or "NEXT: OFF"
 nextToggle.BackgroundColor3 = cfg.dungeonAutoNext and COLOR.greenDark or COLOR.card2
+dodgeToggle.Text = cfg.dungeonAutoDodge and "DODGE: ON" or "DODGE: OFF"
+dodgeToggle.BackgroundColor3 = cfg.dungeonAutoDodge and COLOR.greenDark or COLOR.card2
 
 -- Character respawn and single Heartbeat update loop.
 listen(player.CharacterAdded, function(char)
@@ -894,14 +1109,14 @@ shutdown = function()
     stopDungeon("Hub closed")
     resetOnHumanoid()
     for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
-    if globalEnv.__HuntingHubV3 == shutdown then globalEnv.__HuntingHubV3 = nil end
+    if globalEnv.__RHYEHubV3 == shutdown then globalEnv.__RHYEHubV3 = nil end
     if gui and gui.Parent then gui:Destroy() end
 end
-globalEnv.__HuntingHubV3 = shutdown
+globalEnv.__RHYEHubV3 = shutdown
 listen(close.MouseButton1Click, shutdown)
 listen(gui.Destroying, shutdown)
 updateToggles()
 setPage("Main")
-print("[Hunting Hub V3.1] Loaded. Keybind:", cfg.hotkey)
-print("[Hunting Hub V3] Save config:", CONFIG_FILE)
-print("[Hunting Hub V3.1] Low hover only; enemy AoE, evasion, server hit range still apply.")
+print("[RHYE Hub V3.2] Loaded. Keybind:", cfg.hotkey)
+print("[RHYE Hub V3.2] Save config:", CONFIG_FILE)
+print("[RHYE Hub V3.2] Auto Dodge: experimental red BasePart telegraphs only; damage may still hit.")
